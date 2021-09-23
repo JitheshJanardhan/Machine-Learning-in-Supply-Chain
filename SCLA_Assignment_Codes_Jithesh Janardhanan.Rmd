@@ -1,0 +1,362 @@
+
+```{r}
+#Load the libraries
+
+library(readxl)
+library(outliers)
+library(scales)
+library(psych) 
+library(caTools)
+library(DMwR)
+library(caret)
+library(nnet)
+library(ROCR)
+library(ineq)
+library(e1071)
+library(class)
+library(plotrix)
+library(lattice)
+library(GGally)
+library(ipred)
+library(rpart)
+library(UBL)
+library(ROSE)
+library(stringr)
+library(rpart.plot)
+library(mltools)
+library(data.table)
+library(rattle)
+library(gbm)
+
+```
+
+```{r}
+#Reading data
+
+Inventory_data = read_xlsx(file.choose())
+dim(Inventory_data)
+
+Inventory_data = as.data.frame(Inventory_data)
+```
+```{r}
+
+#Basic checks
+
+sum(is.na(Inventory_data))
+
+str(Inventory_data)
+
+summary(Inventory_data)
+
+```
+
+```{r}
+#Converting categorical variables
+
+Inventory_data$`Ship Mode`= as.factor(Inventory_data$`Ship Mode`)
+Inventory_data$`Product Container` = as.factor(Inventory_data$`Product Container`)
+Inventory_data$`Product Sub-Category`= as.factor(Inventory_data$`Product Sub-Category`)
+
+```
+
+
+```{r}
+#Dropping irrelevant variables
+Inventory_data = Inventory_data[-c(1,2,5)]
+
+head(Inventory_data)
+tail(Inventory_data)
+
+summary(Inventory_data)
+```
+```{r}
+#Extreme values treatment
+
+boxplot(Inventory_data$`Order Quantity`,col = "green",main="Order Qty.")
+boxplot(Inventory_data$Sales,col = "green",main="Sales")
+summary(boxplot(Inventory_data$Sales,plot = FALSE)$out)
+
+table(Inventory_data$`Ship Mode`)
+
+
+outlier_cap = function(x){
+  qnt = quantile(x, probs=c(.25, .75), na.rm = T)
+  caps = quantile(x, probs=c(.05, .95), na.rm = T)
+  H <- 1.5 * IQR(x, na.rm = T)
+  x[x < (qnt[1] - H)] <- caps[1]
+  x[x > (qnt[2] + H)] <- caps[2]
+  return(x)
+}
+
+Inventory_data$Sales = outlier_cap(Inventory_data$Sales)
+boxplot(Inventory_data$Sales,col = "green")
+
+```
+```{r}
+
+#Univariate Analysis
+
+par(mfrow=c(1,2))
+hist(Inventory_data$`Order Quantity`, main = "Order Qty.", xlab = "Order Qty.",col = "Blue")
+hist(Inventory_data$Sales, main = "Sales", xlab = "Sales",col = "Blue")
+dev.off()
+
+
+options(scipen = 900)
+plot(Inventory_data$`Order Quantity`,ylab = "Order Qty.",col="Green",main="Order Qty.")
+plot(Inventory_data$Sales,ylab = "Sales",col="Green",main="Sales")
+
+
+dev.off()
+par(mfrow=c(1,2))
+pie(table(Inventory_data$`Product Container`),main="Product Container")
+pie(table(Inventory_data$`Product Sub-Category`),main="Product Sub-Category")
+pie(table(Inventory_data$`Ship Mode`), main="Ship Mode")
+
+```
+```{r}
+#Bi-variate analysis
+histogram(~Inventory_data$`Ship Mode`|factor(Inventory_data$`Product Container`),data = Inventory_data,
+          main="Ship mode wrt Product Container",xlab = "Ship Mode", col = "Blue")
+
+histogram(~Inventory_data$`Ship Mode`|factor(Inventory_data$`Product Sub-Category`),data = Inventory_data,
+          main="Ship mode wrt Product Sub-Category",xlab = "Ship Mode", col = "Blue")
+
+par(mfrow=c(1,3))
+dev.off()
+boxplot(Inventory_data$Sales~Inventory_data$`Ship Mode`, main = "Sales vs Ship Mode",
+        xlab = "Ship Mode",ylab = "Sales", col = "Green")
+boxplot(Inventory_data$Sales~Inventory_data$`Product Container`,main = "Sales vs Prod Container",
+        xlab = "Product Container",ylab = "Sales",las=2)
+boxplot(Inventory_data$Sales~Inventory_data$`Product Sub-Category`,main = "Sales vs Prod Sub Cat",
+        xlab="Product Sub Cat", ylab = "Sales",las=2)
+
+
+boxplot(Inventory_data$`Order Quantity`~Inventory_data$`Ship Mode`, main = "Ship Mode vs Order Qty.",
+        xlab = "Ship Mode",ylab = "Order Qty.", col = "Red")
+boxplot(Inventory_data$`Order Quantity`~Inventory_data$`Product Container`, main = "Prod Cont vs Order Qty.",
+        xlab = "Product Container",ylab = "Order Qty.", col = "Yellow")
+boxplot(Inventory_data$`Order Quantity`~Inventory_data$`Product Sub-Category`, main = "Prod Sub cat vs Order Qty.",
+        xlab = "Product Sub-Category",ylab = "Order Qty.", col = "Orange")
+```
+```{r}
+
+#multicollinearity
+
+cor.plot(subset(Inventory_data[,c(1,4)]),numbers = TRUE,xlas=2)
+GGally::ggpairs(Inventory_data[,c(1,4)], mapping = aes(color = Inventory_data$`Ship Mode`))
+
+#Fixing column names with spaces
+names(Inventory_data) = str_replace_all(names(Inventory_data), c(" " = "." , "," = "" , "-" = "" ))
+names(Inventory_data)
+```
+
+
+
+```{r}
+
+#One hot encoding for categorical variables
+
+Inventory1 = Inventory_data
+
+
+Inventory_data = one_hot(as.data.table(Inventory1[,-5]))
+
+names(Inventory_data)[names(Inventory_data) == "Product.SubCategory_Chairs & Chairmats"]= "Product.SubCategory_Chairs and Chairmats"
+names(Inventory_data)[names(Inventory_data) == "Product.SubCategory_Pens & Art Supplies"] = "Product.SubCategory_Pens and Art Supplies"
+names(Inventory_data)[names(Inventory_data) == "Product.SubCategory_Storage & Organization"]="Product.SubCategory_Storage and Organization"
+names(Inventory_data)<-str_replace_all(names(Inventory_data), c(" " = "." , "," = "" , "-" = "" ))
+
+
+Inventory_data$Ship.Mode = Inventory1$Ship.Mode
+Inventory_data$Ship.Mode = with(Inventory_data, ifelse(Inventory_data$Ship.Mode=='Regular Air',1,
+                                            ifelse(Inventory_data$Ship.Mode=='Express Air',2,3)))
+
+cor.plot(subset(Inventory_data[,1:26]))
+
+setDF(Inventory_data)
+cols<-c(2:25,27)
+Inventory_data[cols]<-lapply(Inventory_data[cols], factor)
+
+```
+```{r}                                      
+#Train test split
+set.seed(2001)
+#70:30 ratio data splitting
+split1 = sample.split(Inventory_data$Ship.Mode, SplitRatio = 0.70)
+train1<-subset(Inventory_data, split1 == TRUE)
+test1<- subset(Inventory_data, split1 == FALSE)
+nrow(train1)
+nrow(test1)
+prop.table(table(Inventory_data$Ship.Mode))
+
+prop.table(table(train1$Ship.Mode))
+prop.table(table(test1$Ship.Mode))
+
+```
+```{r}
+#Converting 3 class to 2 class
+
+train1$Class = with(train1, ifelse(train1$Ship.Mode==1,1,0))
+prop.table(table(train1$Class))
+
+
+```
+
+
+```{r}
+#oversampling
+
+train1_SMOTE = ovun.sample(Class ~ ., data = train1, method = "over",p=0.6,seed=1)$data
+
+prop.table(table(train1_SMOTE$Class))
+prop.table(table(train1_SMOTE$Ship.Mode))
+
+TwoClassDFCopy = train1_SMOTE
+TwoClassDFCopyX = train1
+
+train1_SMOTE = train1_SMOTE[,-28]
+train1 = train1[,-28]
+
+```
+
+#MODEL BUILDING
+
+```{r}
+#Multinomial Logistic Regression
+
+set.seed(950)
+Model_LR = multinom(Ship.Mode~.,data = train1_SMOTE)
+summary(Model_LR)
+
+#Prediction on train
+
+train1_pred = predict(Model_LR, newdata=train1_SMOTE[,-27], "class") 
+table1 = table(train1_SMOTE$Ship.Mode,train1_pred)
+table1
+round((sum(diag(table1))/sum(table1))*100,2)
+
+#Prediction on test
+test1_pred = predict(Model_LR, newdata=test1[,-27], "class") 
+table2 = table(test1$Ship.Mode,test1_pred)
+table2
+round((sum(diag(table2))/sum(table2))*100,2)
+
+#Confusion matrix and stats
+result1 =  confusionMatrix(test1_pred, test1$Ship.Mode, mode="prec_recall")
+result1
+
+```
+```{r}
+#Support vector machine
+Model_SVM = svm(Ship.Mode~., data=train1_SMOTE, 
+            method="C-classification", kernel="radial",gamma=0.1, cost=10)
+summary(Model_SVM)
+Model_SVM$SV
+
+#Predict on train
+train_pred = predict(Model_SVM, train1_SMOTE) 
+table1 = table(train1_SMOTE$Ship.Mode,train_pred)
+table1
+round((sum(diag(table1))/sum(table1))*100,2)
+
+#Predict on test
+test_pred = predict(Model_SVM, test1)
+table2 = table(test1$Ship.Mode,test_pred)
+table2
+round((sum(diag(table2))/sum(table2))*100,2)
+
+#confusion matrix stats
+result = confusionMatrix(test_pred, test1$Ship.Mode, mode="prec_recall")
+result
+result$byClass
+
+```
+
+
+#Decision Tree
+
+```{r}
+#defining the control parameters
+r.ctrl = rpart.control(minsplit = 125, minbucket = 172,cp=0.33,xval = 10)
+Model_DT =  rpart(Ship.Mode~., data = train1, method = "class")
+print(Model_DT)
+fancyRpartPlot(Model_DT)
+
+#Predict on train
+train1_pred = predict(Model_DT, train1, type = "class") 
+table1 = table(train1$Ship.Mode,train1_pred)
+table1
+round((sum(diag(table1))/sum(table1))*100,2)
+
+#Predict on test
+test1_pred = predict(Model_DT, test1, type = "class")
+table2 = table(test1$Ship.Mode,test1_pred)
+table2
+round((sum(diag(table2))/sum(table2))*100,2)
+
+#confusion matrix
+result = confusionMatrix(test1_pred, test1$Ship.Mode, mode="prec_recall")
+result
+
+```
+
+#Random Forest
+
+```{r}
+mtry = tuneRF(train1_SMOTE[-27],train1_SMOTE$Ship.Mode,ntreeTry = 400,stepFactor = 1.5,improve = 0.01,
+             trace = TRUE,plot = TRUE)
+RFModel1 = randomForest(Ship.Mode~.,data = train1_SMOTE, mtry=25, ntree=400,importance=TRUE)
+varImpPlot(RFModel1)
+print(RFModel1)
+
+#Predict on train
+train1_pred = predict(RFModel1, train1_SMOTE, type = "class") 
+table1= table(train1_SMOTE$Ship.Mode,train1_pred)
+table1
+round((sum(diag(table1))/sum(table1))*100,2)
+
+#Predict on test
+test1_pred = predict(RFModel1, test1, type = "class")
+table2 = table(test1$Ship.Mode,test1_pred)
+table2
+round((sum(diag(table2))/sum(table2))*100,2)
+
+# Compute the confusion matrix and all the statistics
+result1 <- confusionMatrix(test1_pred, test1$Ship.Mode, mode="prec_recall")
+result1
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
